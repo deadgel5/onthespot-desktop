@@ -44,11 +44,14 @@ from .services_middleware import (
     download_apple_music,
     download_crunchyroll,
     download_deezer,
+    download_fallback_youtube,
     download_generic,
     download_generic_v2a,
     download_http_stream,
     download_spotify,
     download_via_ytdlp_audio,
+    resolve_youtube_title_and_artist,
+    search_best_youtube_audio,
 )
 from .utils import (
     add_to_m3u_file,
@@ -57,6 +60,7 @@ from .utils import (
     embed_metadata,
     fix_mp3_metadata,
     format_item_path,
+    get_audio_duration,
     jittered_delay,
     requeue_item,
     set_music_thumbnail,
@@ -206,28 +210,99 @@ class DownloadWorker:
                 self._raise_if_cancelled(item)
 
                 # ---- Fetch metadata -------------------------------------------
+                item_metadata = None
                 try:
                     metadata_fn = get_metadata_function(service, item_type)
                     item_metadata = metadata_fn(token, item_id, item.model_dump())
                 except (Exception, KeyError) as exc:
-                    error_msg = f"Failed to fetch metadata for '{item_id}', Error: {exc}"
-                    if "Max retries" in str(exc) or "exhausted" in str(exc):
-                        error_msg += " (Rate limit exceeded - please try again later or reduce concurrent downloads)"
-                    logger.error(error_msg, exc_info=exc)
-                    item.error = error_msg
-                    item.item_status = ItemStatus.FAILED
-                    progress_hook(item, 0, item.item_status)
-                    requeue_item(item)
-                    continue
+                    if service == "youtube_music" and config.get("auto_fallback_search", True):
+                        if not item.name and not item.artist:
+                            resolved_title, resolved_artist = resolve_youtube_title_and_artist(item_id)
+                            if resolved_title or resolved_artist:
+                                item.name = resolved_title
+                                item.artist = resolved_artist
+                                logger.info(
+                                    "Resolved unavailable YouTube video '%s' metadata via oEmbed: '%s' by '%s'",
+                                    item_id,
+                                    resolved_title,
+                                    resolved_artist,
+                                )
+
+                        if item.name or item.artist:
+                            logger.warning(
+                                "Metadata fetch failed for '%s' (%s). Trying fallback search for '%s - %s'...",
+                                item_id,
+                                exc,
+                                item.artist,
+                                item.name,
+                            )
+                            try:
+                                alt_id, alt_info = search_best_youtube_audio(
+                                    artist=item.artist,
+                                    title=item.name,
+                                    exclude_ids={item_id},
+                                )
+                                if alt_id:
+                                    logger.info(
+                                        "Found replacement on YouTube Music: '%s' (%s)",
+                                        alt_info.get("title"),
+                                        alt_id,
+                                    )
+                                    item_id = alt_id
+                                    item.item_id = alt_id
+                                    item.item_url = f"https://music.youtube.com/watch?v={alt_id}"
+                                    item_metadata = metadata_fn(token, item_id, item.model_dump())
+                            except Exception as fb_exc:
+                                logger.error("Fallback metadata fetch also failed: %s", fb_exc)
+
+                    if not item_metadata:
+                        error_msg = f"Failed to fetch metadata for '{item_id}', Error: {exc}"
+                        if "Max retries" in str(exc) or "exhausted" in str(exc):
+                            error_msg += " (Rate limit exceeded - please try again later or reduce concurrent downloads)"
+                        logger.error(error_msg, exc_info=exc)
+                        item.error = error_msg
+                        item.item_status = ItemStatus.FAILED
+                        progress_hook(item, 0, item.item_status)
+                        requeue_item(item)
+                        continue
 
                 # ---- Playability check ----------------------------------------
                 if not item_metadata.get("is_playable", True):
-                    logger.error("Track is unavailable", extra={"track_id": item_id})
-                    item.error = "The service marked this item as unavailable."
-                    item.item_status = ItemStatus.UNAVAILABLE
-                    progress_hook(item, 0, item.item_status)
-                    requeue_item(item)
-                    continue
+                    if service == "youtube_music" and config.get("auto_fallback_search", True):
+                        if not item.name and not item.artist:
+                            resolved_title, resolved_artist = resolve_youtube_title_and_artist(item_id)
+                            if resolved_title or resolved_artist:
+                                item.name = resolved_title
+                                item.artist = resolved_artist
+
+                        if item.name or item.artist:
+                            logger.warning(
+                                "Track '%s' is not playable. Trying fallback search for '%s - %s'...",
+                                item_id,
+                                item.artist,
+                                item.name,
+                            )
+                            try:
+                                alt_id, alt_info = search_best_youtube_audio(
+                                    artist=item.artist,
+                                    title=item.name,
+                                    exclude_ids={item_id},
+                                )
+                                if alt_id:
+                                    item_id = alt_id
+                                    item.item_id = alt_id
+                                    item.item_url = f"https://music.youtube.com/watch?v={alt_id}"
+                                    item_metadata = metadata_fn(token, item_id, item.model_dump())
+                            except Exception:
+                                pass
+
+                    if not item_metadata.get("is_playable", True):
+                        logger.error("Track is unavailable", extra={"track_id": item_id})
+                        item.error = "The service marked this item as unavailable."
+                        item.item_status = ItemStatus.UNAVAILABLE
+                        progress_hook(item, 0, item.item_status)
+                        requeue_item(item)
+                        continue
 
                 # ---- Emit progress metadata ------------------------------------
                 try:
@@ -537,14 +612,60 @@ class DownloadWorker:
         Returns ``(default_format, bitrate, video_files)``.
         """
         if service == "spotify":
-            default_format, bitrate = download_spotify(
-                item,
-                item_id,
-                item_type,
-                token,
-                temp_path,
-            )
-            return default_format, bitrate, []
+            try:
+                default_format, bitrate = download_spotify(
+                    item,
+                    item_id,
+                    item_type,
+                    token,
+                    temp_path,
+                )
+                actual_file = temp_path + default_format if not os.path.isfile(temp_path) else temp_path
+                actual_dur = get_audio_duration(actual_file)
+                try:
+                    dur_s = int(item_metadata.get("length") or 0) // 1000
+                except (ValueError, TypeError):
+                    dur_s = 0
+
+                title_lower = str(item_metadata.get("title") or item.name or "").lower()
+                is_short_expected = (0 < dur_s <= 45) or any(
+                    w in title_lower for w in ("intro", "outro", "skit", "interlude", "short")
+                )
+                if not is_short_expected and ((dur_s > 45 and actual_dur > 0 and actual_dur < dur_s * 0.6) or (0 < actual_dur < 30)):
+                    logger.warning(
+                        "Spotify download is incomplete or preview only (duration %.1fs vs expected %ds). Triggering YouTube fallback...",
+                        actual_dur,
+                        dur_s,
+                    )
+                    if os.path.exists(actual_file):
+                        os.remove(actual_file)
+                    raise RuntimeError(f"Spotify preview or incomplete track ({actual_dur:.1f}s vs expected {dur_s}s)")
+
+                return default_format, bitrate, []
+            except Exception as spotify_err:
+                if config.get("auto_fallback_search", True):
+                    artist = str(item_metadata.get("artists") or item.artist or "")
+                    title = str(item_metadata.get("title") or item.name or "")
+                    try:
+                        dur_s = int(item_metadata.get("length") or 0) // 1000
+                    except (ValueError, TypeError):
+                        dur_s = 0
+                    logger.warning(
+                        "Spotify download failed for '%s' (%s). Triggering fallback to YouTube Music with best audio quality for '%s - %s'...",
+                        item_id,
+                        spotify_err,
+                        artist,
+                        title,
+                    )
+                    default_format, bitrate = download_fallback_youtube(
+                        item=item,
+                        artist=artist,
+                        title=title,
+                        temp_path=temp_path,
+                        target_duration_s=dur_s,
+                    )
+                    return default_format, bitrate, []
+                raise
 
         if service == "deezer":
             default_format, bitrate = download_deezer(
@@ -556,10 +677,39 @@ class DownloadWorker:
             return default_format, bitrate, []
 
         if service in ("soundcloud", "tidal", "youtube_music"):
-            default_format, bitrate = download_via_ytdlp_audio(
-                item, item_metadata, service, item_id, token, temp_path, item_type
-            )
-            return default_format, bitrate, []
+            try:
+                default_format, bitrate = download_via_ytdlp_audio(
+                    item, item_metadata, service, item_id, token, temp_path, item_type
+                )
+                return default_format, bitrate, []
+            except Exception as ytdl_err:
+                if service == "youtube_music" and config.get("auto_fallback_search", True):
+                    artist = str(item_metadata.get("artists") or item_metadata.get("channel") or item.artist or "")
+                    title = str(item_metadata.get("title") or item.name or "")
+                    if not title and not artist:
+                        title, artist = resolve_youtube_title_and_artist(item_id)
+                    try:
+                        dur_s = int(item_metadata.get("length") or 0) // 1000
+                    except (ValueError, TypeError):
+                        dur_s = 0
+                    if title:
+                        logger.warning(
+                            "YouTube Music download failed for '%s' (%s). Triggering fallback search with best audio quality for '%s - %s'...",
+                            item_id,
+                            ytdl_err,
+                            artist,
+                            title,
+                        )
+                        default_format, bitrate = download_fallback_youtube(
+                            item=item,
+                            artist=artist,
+                            title=title,
+                            temp_path=temp_path,
+                            target_duration_s=dur_s,
+                            exclude_ids={item_id},
+                        )
+                        return default_format, bitrate, []
+                raise
 
         if service in ("bandcamp", "qobuz"):
             default_format, bitrate = download_http_stream(
@@ -629,6 +779,34 @@ class DownloadWorker:
             if size > 0:
                 os.remove(temp_file_path)
             raise RuntimeError(f"Corrupt or incomplete download detected ({size} bytes)")
+
+        # Verify audio duration
+        actual_dur = get_audio_duration(temp_file_path)
+        try:
+            exp_dur = int(item_metadata.get("length") or 0) / 1000
+        except (ValueError, TypeError):
+            exp_dur = 0.0
+
+        title_lower = str(item_metadata.get("title", "")).lower()
+        is_short_expected = (0 < exp_dur <= 45) or any(
+            w in title_lower for w in ("intro", "outro", "skit", "interlude", "short")
+        )
+
+        if not is_short_expected:
+            if (exp_dur > 45 and actual_dur > 0 and actual_dur < exp_dur * 0.6) or (0 < actual_dur < 30):
+                size = os.path.getsize(temp_file_path) if os.path.exists(temp_file_path) else 0
+                logger.error(
+                    "Downloaded file is too short (%.1fs, expected %.1fs, %d bytes): %s",
+                    actual_dur,
+                    exp_dur,
+                    size,
+                    temp_file_path,
+                )
+                if os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
+                raise RuntimeError(
+                    f"Incomplete download: audio duration is only {actual_dur:.1f}s (expected ~{exp_dur:.1f}s)"
+                )
 
         # Lyrics
         lyrics_fn = SERVICE_LYRICS_FUNCTIONS.get(service)

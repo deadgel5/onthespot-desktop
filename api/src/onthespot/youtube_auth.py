@@ -166,20 +166,23 @@ def youtube_ydl_options() -> dict:
     configuration. Cookie values are never sent to the web UI or persisted by
     this helper.
     """
+    options: dict = {"js_runtimes": {"node": {}}}
     mode = str(config.get("youtube_auth_mode") or "none")
     if mode == "browser":
         browser = str(config.get("youtube_cookies_browser") or "").strip()
         if browser:
-            return {"cookiesfrombrowser": (browser,)}
+            options["cookiesfrombrowser"] = (browser,)
+            return options
     elif mode == "cookie_file":
         cookie_file = Path(str(config.get("youtube_cookies_file") or "")).expanduser()
         if cookie_file.is_file():
-            return {"cookiefile": str(cookie_file)}
+            options["cookiefile"] = str(cookie_file)
+            return options
         logger.warning("Configured YouTube cookies file is unavailable: %s", cookie_file)
         raise RuntimeError(
             "The configured YouTube cookies file is unavailable. Reconfigure the YouTube worker in Accounts."
         )
-    return {}
+    return options
 
 
 def is_youtube_url(value: str) -> bool:

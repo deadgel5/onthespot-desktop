@@ -31,6 +31,7 @@ from io import BytesIO
 from urllib.parse import urlparse
 
 import music_tag
+import mutagen
 import requests
 from mutagen.id3 import COMM, ID3, TCMP, USLT, WOAS
 from PIL import Image
@@ -493,6 +494,37 @@ def sanitize_data(value):
     else:
         value = value.replace("/", char)
     return value
+
+
+def get_audio_duration(file_path: str) -> float:
+    """Return the duration of an audio file in seconds, using mutagen and ffprobe as fallback."""
+    if not file_path or not os.path.isfile(file_path):
+        return 0.0
+
+    try:
+        audio = mutagen.File(file_path)
+        if audio and audio.info and getattr(audio.info, "length", None):
+            return float(audio.info.length)
+    except Exception:
+        pass
+
+    try:
+        ffmpeg_bin = config.get("_ffmpeg_bin_path", "ffmpeg")
+        ffprobe_bin = os.path.join(os.path.dirname(ffmpeg_bin), "ffprobe" + (".exe" if os.name == "nt" else ""))
+        if not os.path.isfile(ffprobe_bin):
+            ffprobe_bin = "ffprobe"
+        res = subprocess.run(
+            [ffprobe_bin, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            return float(res.stdout.strip())
+    except Exception:
+        pass
+
+    return 0.0
 
 
 def translate(string):

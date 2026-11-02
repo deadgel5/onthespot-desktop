@@ -136,8 +136,11 @@ def youtube_music_get_track_metadata(_, item_id, item):
 
     # Convert length to milliseconds
     timestamp = info_dict.get("duration_string")
+    duration = info_dict.get("duration")
     try:
-        if timestamp:
+        if duration is not None:
+            length = int(duration * 1000)
+        elif timestamp:
             parts = timestamp.split(":")
             if len(parts) == 3:
                 hours, minutes, seconds = map(int, parts)
@@ -146,13 +149,15 @@ def youtube_music_get_track_metadata(_, item_id, item):
                 minutes, seconds = map(int, parts)
                 total_seconds = (minutes * 60) + seconds
             elif len(parts) == 1:
-                total_seconds = timestamp
+                total_seconds = int(timestamp)
+            else:
+                total_seconds = 0
             length = total_seconds * 1000
         else:
-            length = "0"
+            length = 0
     except Exception:
         logger.error(f"Invalid timestamp: {timestamp}")
-        length = "0"
+        length = 0
 
     # Get thumbnail url
     thumbnail_url = None
@@ -184,7 +189,8 @@ def youtube_music_get_track_metadata(_, item_id, item):
     # Windows takes issue with the following line, not sure why
     # info['release_year'] = info_dict.get('release_date')[:4] #20150504
     release_year = info_dict.get("release_year")
-    info["release_year"] = str(release_year if release_year else info_dict.get("upload_date")[:4])
+    upload_date = info_dict.get("upload_date") or ""
+    info["release_year"] = str(release_year or upload_date[:4] or "0000")
     info["length"] = length
     info["is_playable"] = True if info_dict.get("availability") == "public" and not info_dict.get("is_live") else False
     info["item_id"] = item_id
@@ -208,8 +214,15 @@ def youtube_music_get_playlist_data(_, playlist_id):
     playlist_by = playlist_data.get("channel")  # If null the item is an album
 
     track_ids = []
-    for entry in playlist_data["entries"]:
-        track_ids.append(entry.get("id"))
+    for entry in playlist_data.get("entries") or []:
+        t_id = entry.get("id")
+        if not t_id:
+            continue
+        track_ids.append({
+            "id": t_id,
+            "title": entry.get("title") or "",
+            "artist": entry.get("uploader") or entry.get("channel") or ""
+        })
     return playlist_name, playlist_by, track_ids
 
 

@@ -292,7 +292,7 @@ def main() -> int:
     if port != args.port:
         print(f"Port {args.port} is already in use; using {port} instead.", flush=True)
     print(f"Starting {args.name} on {interface or 'all local interfaces'}:{port}", flush=True)
-    print("Open Spotify → Connect to a device and select the companion.", flush=True)
+    print("Open Spotify -> Connect to a device and select the companion.", flush=True)
     try:
         server = create_server(args.name, port, state_file, interface)
     except Exception as exc:

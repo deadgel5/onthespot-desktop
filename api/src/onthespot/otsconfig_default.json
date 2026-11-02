@@ -78,6 +78,7 @@
   "update_check_interval_hours": 12,
   "illegal_character_replacement": "-",
   "raw_media_download": false,
+  "auto_fallback_search": true,
   "rotate_active_account_number": false,
   "download_delay": 10,
   "download_delay_variance": 5,

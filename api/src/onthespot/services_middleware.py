@@ -31,7 +31,7 @@ from .constants import ItemStatus
 from .otsconfig import config
 from .resources.exceptions import DownloadCancelled, TrackUnavailableError
 from .runtimedata import get_logger, progress_hook, wait_for_download_resume, yt_dlp_progress_hook
-from .utils import requeue_item, run_ffmpeg
+from .utils import get_audio_duration, requeue_item, run_ffmpeg
 from .youtube_auth import is_youtube_url, youtube_ydl_options
 
 logger = get_logger("services_middleware")
@@ -312,21 +312,9 @@ def download_via_ytdlp_audio(item: QueueItem, item_metadata, service, item_id, t
         ydl_opts["nowarnings"] = False
 
     elif service == "youtube_music":
-        # metadata_fn = get_metadata_function(service, item_type)
-        # item_metadata = metadata_fn(token, item_id)
-        # item_url = item_metadata["item_url"]
         default_format = ".m4a"
         bitrate = "128k"
-        ydl_opts["format"] = "bestaudio"
-        # needed for download
-        ydl_opts["extractor_args"] = {
-            "youtube": {
-                "player_client": ["mweb", "tv"],
-            },
-            "youtubepot-bgutilhttp": {
-                "base_url": ["http://bgutil-provider:4416"],
-            },
-        }
+        ydl_opts["format"] = "bestaudio/best"
         ydl_opts.update(youtube_ydl_options())
 
     ydl_opts.update(
@@ -345,7 +333,7 @@ def download_via_ytdlp_audio(item: QueueItem, item_metadata, service, item_id, t
     )
     ydl_opts["progress_hooks"] = [lambda d: yt_dlp_progress_hook(item, d)]
 
-    if is_youtube_url(item_id):
+    if is_youtube_url(item_id) or is_youtube_url(item_url):
         ydl_opts.update(youtube_ydl_options())
 
     with YoutubeDL(ydl_opts) as downloader:
@@ -359,6 +347,279 @@ def download_via_ytdlp_audio(item: QueueItem, item_metadata, service, item_id, t
         os.remove(mpd_file_path)
 
     return default_format, bitrate
+
+
+def resolve_youtube_title_and_artist(video_id: str) -> tuple[str, str]:
+    """Retrieve title and artist from YouTube oEmbed/noembed endpoints for unavailable or deleted videos."""
+    import json
+    import re
+    import urllib.request
+
+    title = ""
+    artist = ""
+
+    urls = [
+        f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json",
+        f"https://noembed.com/embed?url=https://www.youtube.com/watch?v={video_id}",
+    ]
+
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                t = data.get("title") or ""
+                a = data.get("author_name") or ""
+                if t:
+                    title = t
+                if a:
+                    artist = a
+                if title:
+                    break
+        except Exception as e:
+            logger.debug("Failed to resolve oEmbed info for %s from %s: %s", video_id, url, e)
+
+    if title:
+        # Strip leading track numbers like "02- ", "02. ", "02 "
+        title = re.sub(r"^\d+[\s.-]+", "", title).strip()
+    if artist:
+        # Strip " - Topic"
+        artist = re.sub(r"\s*-\s*Topic$", "", artist, flags=re.IGNORECASE).strip()
+
+    return title, artist
+
+
+def search_best_youtube_candidates(
+    artist: str,
+    title: str,
+    target_duration_s: int = 0,
+    exclude_ids: set[str] | None = None,
+) -> list[dict]:
+    """Search YouTube for high quality versions matching artist and title.
+
+    Prioritizes official label releases (Topic channels, official studio audio) with matching duration,
+    disqualifying previews, shorts, and unrelated tracks.
+    """
+    exclude_ids = exclude_ids or set()
+    base_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": True,
+        "skip_download": True,
+    }
+    base_opts.update(youtube_ydl_options())
+
+    clean_artist = (artist or "").strip()
+    clean_title = (title or "").strip()
+
+    queries = []
+    if clean_artist and clean_title:
+        queries.append(f"{clean_artist} - {clean_title} Official Audio")
+        queries.append(f"{clean_artist} - {clean_title}")
+        queries.append(f"{clean_title} {clean_artist}")
+    elif clean_title:
+        queries.append(f"{clean_title} Official Audio")
+        queries.append(clean_title)
+    else:
+        return []
+
+    candidates = []
+    seen_ids = set(exclude_ids)
+
+    with YoutubeDL(base_opts) as ytdl:
+        for q in queries:
+            try:
+                res = ytdl.extract_info(f"ytsearch10:{q}", download=False)
+                for entry in (res or {}).get("entries") or []:
+                    eid = entry.get("id")
+                    if eid and eid not in seen_ids:
+                        seen_ids.add(eid)
+                        candidates.append(entry)
+            except Exception as e:
+                logger.debug("ytsearch query '%s' failed: %s", q, e)
+            if len(candidates) >= 15:
+                break
+
+    if not candidates:
+        return []
+
+    clean_t = clean_title.lower()
+    clean_a = clean_artist.lower()
+    title_words = [w for w in clean_t.replace("-", " ").replace("(", " ").replace(")", " ").split() if len(w) > 2]
+
+    # Check if a short track is legitimately expected (e.g. interlude, skit, intro)
+    is_short_expected = (0 < target_duration_s <= 45) or any(
+        w in clean_t for w in ("intro", "outro", "skit", "interlude", "short")
+    )
+
+    def _score(e: dict) -> int:
+        ch = str(e.get("channel") or e.get("uploader") or "").lower()
+        t = str(e.get("title") or "").lower()
+        dur = int(e.get("duration") or 0)
+
+        # 0. Title relevance check (MANDATORY)
+        matching_title_words = [w for w in title_words if w in t]
+        if title_words and not matching_title_words:
+            return -999
+
+        # 1. Duration check - eliminate shorts, snippets, ringtones
+        if not is_short_expected:
+            if 0 < dur < 45:
+                return -999
+        if target_duration_s > 45 and dur > 0:
+            if dur < target_duration_s * 0.70 or dur > target_duration_s * 1.50:
+                return -999
+
+        score = 0
+        if clean_t in t:
+            score += 150
+        elif title_words and len(matching_title_words) == len(title_words):
+            score += 120
+        elif title_words:
+            score += int((len(matching_title_words) / len(title_words)) * 100)
+
+        # Topic channel: Master quality direct from record label
+        if " - topic" in ch:
+            score += 100
+        if "official audio" in t:
+            score += 50
+        elif "audio" in t:
+            score += 20
+
+        # Artist match in channel or title
+        artist_words = [w for w in clean_a.split() if len(w) > 2]
+        if clean_a in ch or clean_a in t:
+            score += 40
+        elif any(w in ch or w in t for w in artist_words):
+            score += 20
+
+        # Duration match bonus
+        if target_duration_s > 0 and dur > 0:
+            diff = abs(dur - target_duration_s)
+            if diff <= 4:
+                score += 80
+            elif diff <= 10:
+                score += 50
+            elif diff <= 20:
+                score += 25
+            elif diff > 35:
+                score -= 80
+            elif diff > 75:
+                score -= 200
+
+        # Penalize live, cover, karaoke unless original requested it
+        if "live" in t and "live" not in clean_t:
+            score -= 100
+        if "cover" in t and "cover" not in clean_t:
+            score -= 120
+        if "karaoke" in t or "instrumental" in t:
+            score -= 150
+        if "cumbia" in t and "cumbia" not in clean_t:
+            score -= 80
+
+        return score
+
+    valid_candidates = [c for c in candidates if _score(c) > 0]
+    valid_candidates.sort(key=_score, reverse=True)
+    return valid_candidates
+
+
+def search_best_youtube_audio(
+    artist: str,
+    title: str,
+    target_duration_s: int = 0,
+    exclude_ids: set[str] | None = None,
+) -> tuple[str | None, dict | None]:
+    """Search YouTube for the highest audio quality version matching artist and title."""
+    candidates = search_best_youtube_candidates(artist, title, target_duration_s, exclude_ids)
+    if candidates:
+        return candidates[0].get("id"), candidates[0]
+    return None, None
+
+
+def download_fallback_youtube(
+    item: QueueItem,
+    artist: str,
+    title: str,
+    temp_path: str,
+    target_duration_s: int = 0,
+    exclude_ids: set[str] | None = None,
+) -> tuple[str, str]:
+    """Search and download the highest quality audio stream from YouTube for a track."""
+    candidates = search_best_youtube_candidates(
+        artist=artist,
+        title=title,
+        target_duration_s=target_duration_s,
+        exclude_ids=exclude_ids,
+    )
+    if not candidates:
+        raise TrackUnavailableError(f"No alternative found on YouTube for '{artist} - {title}'")
+
+    ydl_opts = {
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "verbose": config.get("debug_mode", False),
+        "quiet": False,
+        "no_warnings": True,
+        "noprogress": True,
+        "extract_audio": True,
+        "outtmpl": temp_path,
+        "continuedl": True,
+        "overwrites": True,
+        "retries": 3,
+        "fragment_retries": 3,
+    }
+    ydl_opts.update(youtube_ydl_options())
+    ydl_opts["progress_hooks"] = [lambda d: yt_dlp_progress_hook(item, d)]
+
+    title_lower = (title or "").lower()
+    is_short_expected = (0 < target_duration_s <= 45) or any(
+        w in title_lower for w in ("intro", "outro", "skit", "interlude", "short")
+    )
+
+    for candidate in candidates:
+        alt_id = candidate.get("id")
+        alt_title = candidate.get("title") or alt_id
+        alt_url = f"https://music.youtube.com/watch?v={alt_id}"
+        logger.info(
+            "Trying fallback track with best audio quality: '%s' (ID: %s)",
+            alt_title,
+            alt_id,
+        )
+
+        try:
+            with YoutubeDL(ydl_opts) as downloader:
+                downloader.download(alt_url)
+
+            # Determine extension and find actual file
+            default_format = ".m4a"
+            bitrate = "128k"
+            actual_file = temp_path
+            if not os.path.isfile(temp_path):
+                for ext in (".m4a", ".webm", ".opus", ".mp3", ".ogg"):
+                    if os.path.isfile(temp_path + ext):
+                        default_format = ext
+                        actual_file = temp_path + ext
+                        break
+
+            # Verify downloaded file duration
+            actual_dur = get_audio_duration(actual_file)
+            if not is_short_expected:
+                if (target_duration_s > 45 and actual_dur > 0 and actual_dur < target_duration_s * 0.6) or (0 < actual_dur < 30):
+                    logger.warning(
+                        "Fallback file is too short (%.1fs vs target %ss). Removing and trying next candidate...",
+                        actual_dur,
+                        target_duration_s,
+                    )
+                    if os.path.exists(actual_file):
+                        os.remove(actual_file)
+                    continue
+
+            return default_format, bitrate
+        except Exception as e:
+            logger.warning("Download failed for candidate '%s': %s", alt_id, e)
+            continue
+
+    raise TrackUnavailableError(f"All fallback candidates failed or were too short for '{artist} - {title}'")
 
 
 def download_http_stream(item: QueueItem, item_metadata, service, item_id, token, temp_path):

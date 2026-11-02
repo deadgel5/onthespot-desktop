@@ -263,7 +263,19 @@ class ParsingWorker:
         # Normalise mix to playlist for the category label
         effective_category = "playlist" if item_type == "mix" else item_type
 
-        for index, track_id in enumerate(track_ids):
+        for index, track_data in enumerate(track_ids):
+            if isinstance(track_data, dict):
+                track_id = str(track_data.get("id") or "")
+                track_title = str(track_data.get("title") or "")
+                track_artist = str(track_data.get("artist") or "")
+            elif isinstance(track_data, tuple):
+                track_id = str(track_data[0])
+                track_title = str(track_data[1]) if len(track_data) > 1 else ""
+                track_artist = str(track_data[2]) if len(track_data) > 2 else ""
+            else:
+                track_id = str(track_data)
+                track_title = ""
+                track_artist = ""
             local_id = format_local_id(track_id)
             item = QueueItem(
                 local_id=local_id,
@@ -271,6 +283,8 @@ class ParsingWorker:
                 item_type="track",
                 item_id=track_id,
                 item_url=item_url,
+                name=track_title,
+                artist=track_artist,
                 parent_category=effective_category,
                 playlist_name=playlist_name,
                 playlist_by=playlist_by,
