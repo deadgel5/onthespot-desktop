@@ -24,6 +24,7 @@ import re
 import ssl
 import string
 import subprocess
+import sys
 import threading
 import time
 from hashlib import md5
@@ -597,10 +598,11 @@ def format_item_path(item: QueueItem, item_metadata):
     primary_composer = get_primary_composer(composer_full)
 
     try:
-        safe_artist = sanitize_data(item_metadata.get("artists"))
+        raw_artist = item_metadata.get("artists") or getattr(item, "artist", "") or ""
+        safe_artist = sanitize_data(raw_artist)
         safe_composer = sanitize_data(primary_composer)
-    except KeyError as e:
-        logger.error(f"No {e} found in metadata, leaving blank")
+    except Exception as e:
+        logger.error(f"Error reading artist metadata: {e}, leaving blank")
         safe_artist = ""
         safe_composer = ""
 
@@ -633,7 +635,11 @@ def format_item_path(item: QueueItem, item_metadata):
         episode_number=format_path_numbers(item_metadata, "episode_number"),
     )
     # Clean up any duplicate consecutive slashes from empty fields
-    item_path = re.sub(r"/+", "/", item_path)
+    item_path = re.sub(r"/+", "/", item_path).strip()
+    if item_path.startswith("- "):
+        item_path = item_path[2:].strip()
+    if item_path.endswith(" -"):
+        item_path = item_path[:-2].strip()
 
     return item_path
 
@@ -1333,3 +1339,43 @@ def format_bytes(size):
         size /= 1024
         index += 1
     return f"{size:.2f} {units[index]}"
+
+
+def prompt_folder_dialog(initial_dir: str = "") -> str:
+    """Open a native OS directory chooser dialog and return the selected path, or empty string."""
+    initial = os.path.abspath(os.path.expanduser(initial_dir)) if initial_dir else os.path.expanduser("~")
+    if os.name == "nt":
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.wm_attributes("-topmost", 1)
+            folder = filedialog.askdirectory(initialdir=initial)
+            root.destroy()
+            return folder.replace("/", "\\") if folder else ""
+        except Exception as e:
+            logger.warning("Windows folder dialog failed: %s", e)
+    elif sys.platform == "darwin":
+        try:
+            cmd = ["osascript", "-e", f'POSIX path of (choose folder default location "{initial}" with prompt "Select Download Folder")']
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                return res.stdout.strip().rstrip("/")
+        except Exception as e:
+            logger.warning("macOS folder dialog failed: %s", e)
+
+    # Generic fallback
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes("-topmost", 1)
+        folder = filedialog.askdirectory(initialdir=initial)
+        root.destroy()
+        return folder or ""
+    except Exception as e:
+        logger.warning("Generic folder dialog failed: %s", e)
+    return ""
+

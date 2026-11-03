@@ -9,6 +9,7 @@ import {
   Cpu,
   Download,
   Film,
+  FolderOpen,
   Globe,
   Key,
   Music,
@@ -20,7 +21,7 @@ import {
   Tag
 } from "lucide-react";
 import React, { useState } from "react";
-import { getTargetBackendUrl, setTargetBackendUrl, testBackendConnection } from "../lib/api";
+import { browseFolder, getTargetBackendUrl, setTargetBackendUrl, testBackendConnection } from "../lib/api";
 import { DownloadProfile, OTSConfig } from "../types";
 import { PageHeader } from "./PageHeader";
 
@@ -378,14 +379,45 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {[
-                  { key: "audio_download_path", label: "Audio Download Path", type: "text", placeholder: "/music/OnTheSpot", description: "Primary directory." },
-                ].map(renderInput)}
+                <div className="md:col-span-2">
+                  <div className="flex items-end gap-2">
+                    <div className="flex-1">
+                      <TextInput
+                        label="Audio Download Path"
+                        type="text"
+                        value={config.audio_download_path ?? ""}
+                        onChange={(val) => onUpdateValue("audio_download_path", val)}
+                        description="Carpeta principal donde se guardarán todas las canciones."
+                        placeholder="/music/OnTheSpot"
+                        size="md"
+                      />
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="md"
+                      onClick={async () => {
+                        try {
+                          const res = await browseFolder("audio_download_path");
+                          if (res?.success && res.path) {
+                            await onUpdateValue("audio_download_path", res.path);
+                          }
+                        } catch (err) {
+                          console.error("Error opening folder picker:", err);
+                        }
+                      }}
+                      title="Seleccionar carpeta en el explorador de archivos"
+                      className="mb-[1px] flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                      <span>Examinar...</span>
+                    </Button>
+                  </div>
+                </div>
               </div>
 
               {[
-                { key: "track_path_formatter", label: "Track File Path Formatter", type: "text", description: "Tags: {artist}, {album}, {track_number}, {disc_number}, {title}, {year}, {genre}" },
-                { key: "playlist_path_formatter", label: "Playlist Path Formatter", type: "text", description: "Layout when 'Use Playlist Path Structure' is enabled." },
+                { key: "track_path_formatter", label: "Track File Path Formatter", type: "text", description: "Default: {artist} - {name} (Tags: {artist}, {album}, {track_number}, {disc_number}, {title}, {year}, {genre})" },
+                { key: "playlist_path_formatter", label: "Playlist Path Formatter", type: "text", description: "Default: {artist} - {name} (Layout when 'Use Playlist Path Structure' is enabled.)" },
               ].map(renderInput)}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

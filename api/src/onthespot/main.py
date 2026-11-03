@@ -87,7 +87,7 @@ from .statistics import clear_history, export_history, import_history
 from .updater import (
     check_for_updates,
 )
-from .utils import open_item
+from .utils import open_item, prompt_folder_dialog
 from .youtube_auth import (
     managed_youtube_cookie_path,
     store_youtube_cookie_file,
@@ -932,6 +932,21 @@ async def save_config():
     :return: Result of saving the configuration.
     """
     return config.save()
+
+
+@app.post("/config/browse-folder")
+async def browse_folder(payload: dict[str, Any] = None):
+    """
+    Open native OS directory dialog and return the selected folder path.
+    """
+    key = (payload or {}).get("key", "audio_download_path")
+    current_path = config.get(key) or ""
+    selected = await asyncio.to_thread(prompt_folder_dialog, current_path)
+    if selected:
+        config.set(key, selected)
+        config.save()
+        return {"success": True, "path": selected, "key": key}
+    return {"success": False, "path": current_path, "key": key}
 
 
 @app.get("/exports/location")

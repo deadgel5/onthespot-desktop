@@ -192,11 +192,11 @@ class AppSettings(BaseModel):
     download_queue_show_unavailable: bool = True
     download_queue_show_completed: bool = True
     audio_download_path: str = "/root/Music/OnTheSpot"
-    track_path_formatter: str = "Tracks/{album_artist}/{year} {album}/{track_number}. {name}"
+    track_path_formatter: str = "{artist} - {name}"
     podcast_file_format: str = "mp3"
     podcast_path_formatter: str = "Episodes/{album}/{name}"
     use_playlist_path: bool = False
-    playlist_path_formatter: str = "Playlists/{playlist_name} by {playlist_owner}/{playlist_number}. {name} - {artist}"
+    playlist_path_formatter: str = "{artist} - {name}"
     create_m3u_file: bool = False
     m3u_path_formatter: str = "M3U/{playlist_name} by {playlist_owner}"
     extinf_separator: str = "; "

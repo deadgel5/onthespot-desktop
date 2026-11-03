@@ -121,6 +121,16 @@ export async function resetOTSConfig(): Promise<OTSConfig> {
   if (!res.ok) throw new Error("Failed to reset configuration");
   return await res.json();
 }
+
+export async function browseFolder(key: string = "audio_download_path"): Promise<{ success: boolean; path: string }> {
+  const res = await request("/config/browse-folder", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key }),
+  });
+  if (!res.ok) throw new Error("Failed to open directory browser");
+  return await res.json();
+}
 export async function updateOTSConfigValue<K extends keyof OTSConfig>(
   key: K,
   value: OTSConfig[K]
