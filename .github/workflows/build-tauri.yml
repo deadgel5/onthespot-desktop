@@ -42,8 +42,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: "npm"
-          cache-dependency-path: "ui/package-lock.json"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -56,27 +54,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
-      - name: Install Python API dependencies and PyInstaller
-        run: |
-          uv pip install --system --upgrade pip pyinstaller
-          cd api
-          uv sync --system
-
-      - name: Build Python backend sidecar
+      - name: Sync Python environment and build sidecar
         env:
           PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION: python
         run: |
-          python api/build_sidecar.py ${{ matrix.target }}
+          cd api
+          uv sync
+          uv run --with pyinstaller python build_sidecar.py ${{ matrix.target }}
 
       - name: Install frontend dependencies
         run: |
           cd ui
-          npm ci
+          npm install
 
       - name: Build Tauri Desktop Application
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_KEY_PASSWORD }}
         run: |
           cd ui
           npx tauri build --target ${{ matrix.target }}

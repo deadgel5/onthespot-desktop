@@ -28,13 +28,20 @@ def main():
 
     root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     api_dir = os.path.join(root_dir, "api")
+    src_dir = os.path.join(api_dir, "src")
     entrypoint = os.path.join(api_dir, "entrypoint_tauri.py")
     output_dir = os.path.join(root_dir, "ui", "src-tauri", "binaries")
     os.makedirs(output_dir, exist_ok=True)
 
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+
     ext = ".exe" if "windows" in target else ""
     final_binary_name = f"ots-backend-{target}{ext}"
     final_binary_path = os.path.join(output_dir, final_binary_name)
+
+    # Add default config & resources to bundle
+    onthespot_pkg = os.path.join(src_dir, "onthespot")
 
     # PyInstaller arguments
     cmd = [
@@ -45,7 +52,8 @@ def main():
         "--onefile",
         "--name", f"ots-backend-{target}",
         "--distpath", output_dir,
-        "--paths", os.path.join(api_dir, "src"),
+        "--paths", src_dir,
+        "--add-data", f"{onthespot_pkg}{os.pathsep}onthespot",
         "--collect-all", "onthespot",
         "--collect-all", "fastapi",
         "--collect-all", "uvicorn",
@@ -70,8 +78,13 @@ def main():
         entrypoint
     ]
 
+    env = os.environ.copy()
+    env["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{src_dir}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else src_dir
+
     print("Running command:", " ".join(cmd))
-    res = subprocess.run(cmd)
+    res = subprocess.run(cmd, env=env)
     if res.returncode != 0:
         print("PyInstaller build failed!", file=sys.stderr)
         sys.exit(res.returncode)
