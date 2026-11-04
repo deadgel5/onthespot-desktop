@@ -7,9 +7,18 @@ struct AppState {
     backend_child: Mutex<Option<CommandChild>>,
 }
 
+fn kill_sidecar(state: &AppState) {
+    if let Ok(mut lock) = state.backend_child.lock() {
+        if let Some(child) = lock.take() {
+            let _ = child.kill();
+            log::info!("OnTheSpot backend sidecar terminated cleanly");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(AppState {
             backend_child: Mutex::new(None),
@@ -29,7 +38,9 @@ pub fn run() {
                 match sidecar_command.spawn() {
                     Ok((_rx, child)) => {
                         let state = app.state::<AppState>();
-                        *state.backend_child.lock().unwrap() = Some(child);
+                        if let Ok(mut lock) = state.backend_child.lock() {
+                            *lock = Some(child);
+                        }
                         log::info!("OnTheSpot backend sidecar spawned successfully");
                     }
                     Err(err) => {
@@ -43,14 +54,16 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
                 let state = window.state::<AppState>();
-                if let Ok(mut lock) = state.backend_child.lock() {
-                    if let Some(child) = lock.take() {
-                        let _ = child.kill();
-                        log::info!("OnTheSpot backend sidecar terminated cleanly");
-                    }
-                }
+                kill_sidecar(&state);
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running OnTheSpot desktop application");
+        .build(tauri::generate_context!())
+        .expect("error while building OnTheSpot desktop application");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            let state = app_handle.state::<AppState>();
+            kill_sidecar(&state);
+        }
+    });
 }
