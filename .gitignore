@@ -164,3 +164,5 @@ node_modules/
 # virtual environments and installed modules ignored, but commit these files.
 !api/uv.lock
 !ui/package-lock.json
+
+iniciar.bat
