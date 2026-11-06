@@ -39,6 +39,12 @@
     "externalBin": [
       "binaries/ots-backend"
     ],
+    "windows": {
+      "nsis": {
+        "installMode": "both",
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    },
     "macOS": {
       "minimumSystemVersion": "11.0"
     }
