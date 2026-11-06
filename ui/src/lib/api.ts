@@ -14,23 +14,200 @@ import {
   YouTubeAuthenticationStatus
 } from "../types";
 
-const config = {
-  // Production UI is served by FastAPI, so use the current browser origin.
-  // This also works behind Unraid's host/IP and reverse proxies.
-  api_url: import.meta.env.VITE_API_URL || window.location.origin,
-};
+function getInitialBackendUrl(): string {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  if (typeof window !== "undefined") {
+    const origin = window.location.origin || "";
+    // If running in Tauri or embedded desktop environment, target local backend
+    if (
+      origin.includes("tauri") ||
+      origin.startsWith("tauri:") ||
+      "__TAURI_INTERNALS__" in window ||
+      "__TAURI__" in window
+    ) {
+      return "http://127.0.0.1:6767";
+    }
+    return origin;
+  }
+  return "http://127.0.0.1:6767";
+}
 
-const DEFAULT_URL = config.api_url;
+const DEFAULT_URL = getInitialBackendUrl();
 const STORAGE_KEY = "OTS_FASTAPI_URL";
 
-export const DEFAULT_CONFIG: OTSConfig = await fetchOTSConfig()
+const FALLBACK_CONFIG: OTSConfig = {
+  version: "2.0.3",
+  debug_mode: false,
+  language_index: 0,
+  language: "en_US",
+  total_downloaded_items: 0,
+  total_downloaded_data: 0,
+  m3u_format: "m3u8",
+  use_double_digit_path_numbers: false,
+  ffmpeg_args: [],
+  active_account_number: 0,
+  accounts: [],
+  use_webui_login: false,
+  webui_username: "",
+  webui_password: "",
+  theme: "dark",
+  explicit_label: "🅴",
+  download_copy_btn: false,
+  download_open_btn: false,
+  download_locate_btn: true,
+  download_delete_btn: true,
+  show_search_thumbnails: true,
+  show_download_thumbnails: true,
+  thumbnail_size: 60,
+  max_search_results: 10,
+  disable_download_popups: false,
+  windows_10_explorer_thumbnails: false,
+  mirror_spotify_playback: false,
+  close_to_tray: false,
+  check_for_updates: false,
+  illegal_character_replacement: "-",
+  raw_media_download: false,
+  rotate_active_account_number: false,
+  download_delay: 10,
+  download_delay_variance: 5,
+  download_chunk_size: 50000,
+  maximum_queue_workers: 1,
+  maximum_download_workers: 1,
+  enable_retry_worker: false,
+  retry_worker_delay: 10,
+  api_retry_max_attempts: 3,
+  api_retry_base_delay: 2,
+  api_retry_max_delay: 60,
+  api_request_delay: 1,
+  cache_api_calls: true,
+  api_response_cache_ttl_seconds: 86400,
+  spotify_metadata_cache_ttl_seconds: 604800,
+  spotify_search_cache_ttl_seconds: 900,
+  playlist_automation_cache_ttl_seconds: 60,
+  spotify_connect_port: 6768,
+  spotify_webapi_override_client_id: "",
+  spotify_webapi_override_client_secret: "",
+  cache_metadata_in_queue: true,
+  fetch_genre_metadata: false,
+  fetch_extended_album_metadata: false,
+  fetch_audio_features: false,
+  fetch_track_credits: false,
+  enable_search_tracks: true,
+  enable_search_albums: true,
+  enable_search_playlists: true,
+  enable_search_artists: true,
+  enable_search_episodes: true,
+  enable_search_podcasts: true,
+  enable_search_audiobooks: true,
+  f_search_tracks: false,
+  f_search_albums: false,
+  f_search_artists: false,
+  f_search_playlists: false,
+  search_prefix: "the",
+  download_queue_show_waiting: true,
+  download_queue_show_failed: true,
+  download_queue_show_cancelled: true,
+  download_queue_show_unavailable: true,
+  download_queue_show_completed: true,
+  audio_download_path: "",
+  track_path_formatter: "{artist} - {name}",
+  podcast_file_format: "mp3",
+  podcast_path_formatter: "Episodes/{album}/{name}",
+  use_playlist_path: false,
+  playlist_path_formatter: "{artist} - {name}",
+  create_m3u_file: false,
+  m3u_path_formatter: "M3U/{playlist_name} by {playlist_owner}",
+  extinf_separator: "; ",
+  extinf_label: "{playlist_number}. {artist} - {name}",
+  save_album_cover: false,
+  album_cover_format: "png",
+  file_hertz: 44100,
+  use_custom_file_bitrate: false,
+  use_source_format: false,
+  prefer_best_source_format: true,
+  download_lyrics: false,
+  only_download_synced_lyrics: false,
+  only_download_plain_lyrics: false,
+  save_lrc_file: false,
+  translate_file_path: false,
+  metadata_separator: "; ",
+  overwrite_existing_metadata: false,
+  embed_branding: false,
+  embed_cover: true,
+  embed_artist: true,
+  embed_album: true,
+  embed_albumartist: true,
+  embed_name: true,
+  embed_year: true,
+  embed_discnumber: true,
+  embed_tracknumber: true,
+  embed_genre: true,
+  embed_performers: false,
+  embed_producers: false,
+  embed_writers: true,
+  embed_composer: true,
+  prefer_composer_as_album_artist: false,
+  shorten_composer_tag: false,
+  embed_label: true,
+  embed_copyright: true,
+  embed_description: true,
+  embed_language: true,
+  embed_isrc: true,
+  embed_length: true,
+  embed_url: true,
+  embed_key: true,
+  embed_bpm: true,
+  embed_compilation: true,
+  embed_lyrics: true,
+  embed_explicit: false,
+  embed_upc: false,
+  embed_service_id: false,
+  embed_timesignature: false,
+  embed_acousticness: false,
+  embed_danceability: false,
+  embed_energy: false,
+  embed_instrumentalness: false,
+  embed_liveness: false,
+  embed_loudness: false,
+  embed_speechiness: false,
+  embed_valence: false,
+  video_download_path: "",
+  movie_file_format: "mkv",
+  movie_path_formatter: "Movies/{name} ({release_year})",
+  show_file_format: "mkv",
+  show_path_formatter: "Shows/{show_name}/Season {season_number}/{episode_number}. {name}",
+  preferred_video_resolution: 1080,
+  download_subtitles: false,
+  download_chapters: false,
+  preferred_audio_language: "en-US",
+  preferred_subtitle_language: "en-US",
+  download_all_available_audio: false,
+  download_all_available_subtitles: false,
+  v2a_enable: false,
+  v2a_preferred_codec: "mp3",
+  v2a_preferred_bitrate: 192,
+  auto_fallback_search: true
+};
+
+const FALLBACK_PROFILES: DownloadProfile[] = [
+  { id: "mp3-320", name: "MP3 · 320 kbps", format: "mp3", bitrate: 320, download_path: "" },
+  { id: "flac", name: "FLAC · lossless", format: "flac", bitrate: 1411, download_path: "" }
+];
+
+export const DEFAULT_CONFIG: OTSConfig = await fetchOTSConfig().catch(() => FALLBACK_CONFIG);
 
 // Default Download Profiles
-export const DEFAULT_PROFILES: DownloadProfile[] = await fetchProfiles();
+export const DEFAULT_PROFILES: DownloadProfile[] = await fetchProfiles().catch(() => FALLBACK_PROFILES);
 
 export function getTargetBackendUrl(): string {
   if (typeof window === "undefined") return DEFAULT_URL;
-  return localStorage.getItem(STORAGE_KEY) || DEFAULT_URL;
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (stored && !stored.includes("tauri") && !stored.startsWith("tauri:")) {
+    return stored;
+  }
+  return DEFAULT_URL;
 }
 
 export function setTargetBackendUrl(url: string): void {

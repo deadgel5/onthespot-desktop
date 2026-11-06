@@ -7,6 +7,7 @@ import pkg from "./package.json";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
   return {
+    base: "./",
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

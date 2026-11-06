@@ -21,11 +21,9 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             name: macOS-AppleSilicon-M1
-          - os: macos-13
-            target: x86_64-apple-darwin
-            name: macOS-Intel-x64
 
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository

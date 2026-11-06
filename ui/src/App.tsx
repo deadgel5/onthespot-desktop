@@ -153,6 +153,31 @@ export default function App() {
     loadData();
   }, []);
 
+  // Retry connecting if backend is still starting up
+  useEffect(() => {
+    if (serverStatus === "online") return;
+    const interval = setInterval(async () => {
+      try {
+        const health = await checkServerHealth();
+        if (health.status === "online") {
+          setServerStatus("online");
+          setServerVersion(health.version);
+          const [cfg, profs, accs] = await Promise.all([
+            fetchOTSConfig().catch(() => DEFAULT_CONFIG),
+            fetchProfiles().catch(() => DEFAULT_PROFILES),
+            fetchAccounts().catch(() => []),
+          ]);
+          setConfig(cfg);
+          setProfiles(profs);
+          setAccounts(accs);
+        }
+      } catch {
+        // Backend still spinning up
+      }
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [serverStatus]);
+
   useEffect(() => {
     async function refreshQueue() {
       try {

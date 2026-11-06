@@ -34,18 +34,27 @@ pub fn run() {
 
             // Spawn the python backend sidecar in release mode or if present
             let shell = app.shell();
-            if let Ok(sidecar_command) = shell.sidecar("ots-backend") {
-                match sidecar_command.spawn() {
-                    Ok((_rx, child)) => {
-                        let state = app.state::<AppState>();
-                        if let Ok(mut lock) = state.backend_child.lock() {
-                            *lock = Some(child);
+            let sidecar_result = shell
+                .sidecar("binaries/ots-backend")
+                .or_else(|_| shell.sidecar("ots-backend"));
+
+            match sidecar_result {
+                Ok(sidecar_command) => {
+                    match sidecar_command.spawn() {
+                        Ok((_rx, child)) => {
+                            let state = app.state::<AppState>();
+                            if let Ok(mut lock) = state.backend_child.lock() {
+                                *lock = Some(child);
+                            }
+                            log::info!("OnTheSpot backend sidecar spawned successfully");
                         }
-                        log::info!("OnTheSpot backend sidecar spawned successfully");
+                        Err(err) => {
+                            log::warn!("Could not spawn backend sidecar: {err}. If running in dev mode, start backend manually.");
+                        }
                     }
-                    Err(err) => {
-                        log::warn!("Could not spawn backend sidecar: {err}. If running in dev mode, start backend manually.");
-                    }
+                }
+                Err(err) => {
+                    log::warn!("Could not find backend sidecar: {err}. If running in dev mode, start backend manually.");
                 }
             }
 
