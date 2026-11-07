@@ -369,7 +369,15 @@ app = FastAPI(
 # Production requests are same-origin because FastAPI serves the UI. Vite's
 # local development origins remain enabled, and operators can add explicit
 # cross-origin frontends with a comma-separated ONTHESPOT_CORS_ORIGINS value.
-cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+# Tauri uses https://tauri.localhost or tauri://localhost.
+cors_origins = [
+    "*",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://tauri.localhost",
+    "http://tauri.localhost",
+    "tauri://localhost",
+]
 cors_origins.extend(
     origin.strip() for origin in os.environ.get("ONTHESPOT_CORS_ORIGINS", "").split(",") if origin.strip()
 )
@@ -1196,10 +1204,12 @@ async def add_account(service: str, item: AccountData | None = None):
                 found = True
             case "spotify":
                 add_spotify_account()
-                # found = True
+                notification_hook(title="Spotify Connect started", message="Open Spotify and connect to OnTheSpot")
+                return True
             case "tidal":
                 add_tidal_account()
-                # found = True
+                notification_hook(title="Tidal sign-in started")
+                return True
             case "applemusic":
                 apple_music_add_account(item.token)
                 found = True

@@ -965,7 +965,6 @@ export const AccountsManager: React.FC<AccountsManagerProps> = ({
                       <div className="grid gap-2 sm:grid-cols-2">
                         <button
                           type="button"
-                          disabled= {true}
                           aria-pressed={spotifyAccessMode === "local"}
                           onClick={() => {
                             setSpotifyAccessMode("local");
@@ -983,8 +982,7 @@ export const AccountsManager: React.FC<AccountsManagerProps> = ({
                             <Wifi className="h-4 w-4 text-emerald-500" /> Local network
                           </span>
                           <span className="mt-1 block text-xs text-neutral-500 dark:text-[#b3b3b3]">
-                            Coming Soon.
-                            Use Spotify Connect directly on the same Device.
+                            Use Spotify Connect directly on this computer or local Wi-Fi.
                           </span>
                         </button>
 
@@ -1005,10 +1003,24 @@ export const AccountsManager: React.FC<AccountsManagerProps> = ({
                             <Globe className="h-4 w-4 text-amber-500" /> Remote access
                           </span>
                           <span className="mt-1 block text-xs text-neutral-500 dark:text-[#b3b3b3]">
-                            Use the local companion helper over VPN/HTTPs.
+                            Use the companion helper over VPN/Docker.
                           </span>
                         </button>
                       </div>
+
+                      {spotifyAccessMode === "local" && (
+                        <div className="rounded-lg border-l-4 border-emerald-500 bg-emerald-500/10 dark:bg-[#173b25] p-3 text-xs leading-relaxed text-emerald-800 dark:text-emerald-300 space-y-2">
+                          <p className="font-semibold text-neutral-900 dark:text-white">
+                            Spotify Connect Direct Sign-in
+                          </p>
+                          <ol className="list-decimal space-y-1 pl-4 text-neutral-700 dark:text-[#d2d2d2]">
+                            <li>Click the <strong>Start sign-in</strong> button below.</li>
+                            <li>Open Spotify on this PC (or your phone on the same Wi-Fi).</li>
+                            <li>Play any song and tap the <strong>Devices</strong> icon (speaker icon).</li>
+                            <li>Select <strong>OnTheSpot</strong> to connect.</li>
+                          </ol>
+                        </div>
+                      )}
 
                       {spotifyAccessMode === "remote" && (
                         <div className="rounded-lg border-l-4 border-amber-500 bg-amber-500/10 dark:bg-[#3b321d] p-3 text-xs leading-relaxed text-amber-800 dark:text-[#f6b94a] space-y-3">
