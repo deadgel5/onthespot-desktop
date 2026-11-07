@@ -8,23 +8,8 @@
   "permissions": [
     "core:default",
     "shell:default",
-    "shell:allow-sidecar",
-    "shell:allow-execute",
     {
       "identifier": "shell:allow-spawn",
-      "allow": [
-        {
-          "name": "ots-backend",
-          "sidecar": true
-        },
-        {
-          "name": "binaries/ots-backend",
-          "sidecar": true
-        }
-      ]
-    },
-    {
-      "identifier": "shell:allow-execute",
       "allow": [
         {
           "name": "ots-backend",
