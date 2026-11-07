@@ -1,19 +1,68 @@
+use std::process::Child;
 use std::sync::Mutex;
 use tauri::Manager;
-use tauri_plugin_shell::ShellExt;
-use tauri_plugin_shell::process::CommandChild;
 
 struct AppState {
-    backend_child: Mutex<Option<CommandChild>>,
+    backend_child: Mutex<Option<Child>>,
 }
 
 fn kill_sidecar(state: &AppState) {
     if let Ok(mut lock) = state.backend_child.lock() {
-        if let Some(child) = lock.take() {
+        if let Some(mut child) = lock.take() {
             let _ = child.kill();
             log::info!("OnTheSpot backend sidecar terminated cleanly");
         }
     }
+}
+
+fn spawn_backend_sidecar() -> Option<Child> {
+    let current_exe = std::env::current_exe().ok()?;
+    let exe_dir = current_exe.parent()?;
+
+    let binary_name = if cfg!(windows) {
+        "ots-backend.exe"
+    } else {
+        "ots-backend"
+    };
+
+    // 1. Direct path (where NSIS on Windows and .app bundle on macOS place the external binary)
+    let direct_path = exe_dir.join(binary_name);
+    // 2. Binaries subdirectory fallback
+    let sub_path = exe_dir.join("binaries").join(binary_name);
+
+    let target_path = if direct_path.is_file() {
+        Some(direct_path)
+    } else if sub_path.is_file() {
+        Some(sub_path)
+    } else {
+        None
+    };
+
+    if let Some(path) = target_path {
+        log::info!("Spawning backend from: {:?}", path);
+        let mut cmd = std::process::Command::new(path);
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW (0x08000000) prevents command prompt window from showing
+            cmd.creation_flags(0x08000000);
+        }
+
+        match cmd.spawn() {
+            Ok(child) => {
+                log::info!("Backend process spawned successfully");
+                return Some(child);
+            }
+            Err(err) => {
+                log::error!("Failed to spawn backend: {}", err);
+            }
+        }
+    } else {
+        log::warn!("Backend binary not found. If running in dev mode, start backend manually.");
+    }
+
+    None
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -32,29 +81,11 @@ pub fn run() {
                 )?;
             }
 
-            // Spawn the python backend sidecar in release mode or if present
-            let shell = app.shell();
-            let sidecar_result = shell
-                .sidecar("binaries/ots-backend")
-                .or_else(|_| shell.sidecar("ots-backend"));
-
-            match sidecar_result {
-                Ok(sidecar_command) => {
-                    match sidecar_command.spawn() {
-                        Ok((_rx, child)) => {
-                            let state = app.state::<AppState>();
-                            if let Ok(mut lock) = state.backend_child.lock() {
-                                *lock = Some(child);
-                            }
-                            log::info!("OnTheSpot backend sidecar spawned successfully");
-                        }
-                        Err(err) => {
-                            log::warn!("Could not spawn backend sidecar: {err}. If running in dev mode, start backend manually.");
-                        }
-                    }
-                }
-                Err(err) => {
-                    log::warn!("Could not find backend sidecar: {err}. If running in dev mode, start backend manually.");
+            // Spawn the python backend process automatically
+            if let Some(child) = spawn_backend_sidecar() {
+                let state = app.state::<AppState>();
+                if let Ok(mut lock) = state.backend_child.lock() {
+                    *lock = Some(child);
                 }
             }
 
