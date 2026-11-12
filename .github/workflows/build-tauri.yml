@@ -18,7 +18,7 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             name: Windows-x64
-          - os: macos-latest
+          - os: macos-14
             target: aarch64-apple-darwin
             name: macOS-AppleSilicon-M1
 
@@ -42,7 +42,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

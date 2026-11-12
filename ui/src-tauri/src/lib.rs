@@ -83,10 +83,8 @@ pub fn run() {
 
             // Spawn the python backend process automatically
             if let Some(child) = spawn_backend_sidecar() {
-                let state = app.state::<AppState>();
-                if let Ok(mut lock) = state.backend_child.lock() {
-                    *lock = Some(child);
-                }
+                // Use a single chained expression to avoid borrow lifetime issues (E0597)
+                *app.state::<AppState>().backend_child.lock().unwrap() = Some(child);
             }
 
             Ok(())
