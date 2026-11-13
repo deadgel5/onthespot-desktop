@@ -40,6 +40,25 @@ def main():
     final_binary_name = f"ots-backend-{target}{ext}"
     final_binary_path = os.path.join(output_dir, final_binary_name)
 
+    # Strip any compiled .pyd / .so Cython binaries from zeroconf to force it into pure Python mode.
+    # This prevents Windows Code Integrity / WDAC policies from blocking unsigned time.cp312-win_amd64.pyd.
+    try:
+        import zeroconf
+        zc_dir = os.path.dirname(zeroconf.__file__)
+        removed_count = 0
+        for root, _, files in os.walk(zc_dir):
+            for file in files:
+                if file.endswith((".pyd", ".so")):
+                    try:
+                        os.remove(os.path.join(root, file))
+                        removed_count += 1
+                    except Exception as err:
+                        print(f"Error removing {file}: {err}")
+        if removed_count > 0:
+            print(f"Removed {removed_count} compiled zeroconf binaries for pure-Python fallback (WDAC compatible)")
+    except Exception as e:
+        print(f"Warning: Could not strip zeroconf binaries: {e}")
+
     # Add default config & resources to bundle
     onthespot_pkg = os.path.join(src_dir, "onthespot")
 
@@ -58,6 +77,7 @@ def main():
         "--collect-all", "fastapi",
         "--collect-all", "uvicorn",
         "--collect-all", "librespot",
+        "--collect-all", "zeroconf",
         "--collect-all", "yt_dlp",
         "--collect-all", "music_tag",
         "--collect-all", "mutagen",
