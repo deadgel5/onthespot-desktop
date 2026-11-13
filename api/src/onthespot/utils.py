@@ -662,11 +662,68 @@ def run_ffmpeg(command: list) -> None:
         subprocess.check_call(command, shell=False)
 
 
+def get_loudnorm_filter(input_file: str, target_i: float = -14.0, target_tp: float = -1.0, target_lra: float = 11.0) -> list[str]:
+    """Perform pass 1 analysis of *input_file* with FFmpeg's loudnorm filter.
+
+    Returns the -af arguments for pass 2 (linear 2-pass normalization).
+    If pass 1 or JSON parsing fails, falls back gracefully to standard 1-pass loudnorm.
+    """
+    ffmpeg_bin = config.get("_ffmpeg_bin_path", "ffmpeg")
+    pass1_cmd = [
+        ffmpeg_bin,
+        "-hide_banner",
+        "-nostats",
+        "-i",
+        input_file,
+        "-af",
+        f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}:print_format=json",
+        "-f",
+        "null",
+        "-",
+    ]
+    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    try:
+        res = subprocess.run(
+            pass1_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=creationflags,
+            timeout=120,
+        )
+        output = res.stderr or ""
+        start_idx = output.find("{")
+        end_idx = output.rfind("}")
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            json_str = output[start_idx : end_idx + 1]
+            stats = json.loads(json_str)
+            filter_str = (
+                f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}:"
+                f"measured_I={stats['input_i']}:"
+                f"measured_TP={stats['input_tp']}:"
+                f"measured_LRA={stats['input_lra']}:"
+                f"measured_thresh={stats['input_thresh']}:"
+                f"offset={stats['target_offset']}:"
+                f"linear=true"
+            )
+            logger.info(
+                f"Loudnorm 2-pass analysis for '{os.path.basename(input_file)}': "
+                f"measured I={stats.get('input_i')} LUFS, TP={stats.get('input_tp')} dBTP -> "
+                f"target I={target_i} LUFS, TP={target_tp} dBTP"
+            )
+            return ["-af", filter_str]
+    except Exception as err:
+        logger.warning(f"Loudnorm pass 1 failed, falling back to 1-pass: {err}")
+
+    return ["-af", f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}"]
+
+
 def convert_audio_format(filename, target_file_path, bitrate: int, temp_format, force_bitrate=False):
     """Re-encode or copy *filename* to the target format via ffmpeg.
 
-    If the file is already in *default_format* and a custom bitrate is not
-    requested, the audio stream is copied without re-encoding.
+    If the file is already in *default_format*, a custom bitrate is not
+    requested, and audio normalization is disabled, the audio stream is
+    copied without re-encoding.
     """
     if os.path.isfile(os.path.abspath(filename)):
         target_path = os.path.abspath(target_file_path)
@@ -682,12 +739,22 @@ def convert_audio_format(filename, target_file_path, bitrate: int, temp_format, 
         if config.get("debug_mode", False) == False:
             command += ["-loglevel", "error", "-hide_banner", "-nostats"]
 
-        # Check if media format is service default
+        # Check audio normalization
+        should_normalize = config.get("normalize_audio", False)
+        loudnorm_args = []
+        if should_normalize:
+            target_i = float(config.get("normalize_target_lufs", -14.0))
+            target_tp = float(config.get("normalize_target_tp", -1.0))
+            target_lra = float(config.get("normalize_target_lra", 11.0))
+            loudnorm_args = get_loudnorm_filter(temp_file, target_i, target_tp, target_lra)
 
-        if target_filetype == temp_format and force_bitrate:
-            command += ["-b:a", f"{bitrate}k"]
-        elif target_filetype == temp_format:
+        # Check if media format is service default and whether re-encoding is needed
+        if target_filetype == temp_format and not should_normalize and not force_bitrate:
             command += ["-c:a", "copy"]
+        elif target_filetype == temp_format and (force_bitrate or should_normalize):
+            if target_filetype not in [".flac", ".wav"]:
+                command += ["-b:a", f"{bitrate}k"]
+            command += loudnorm_args
         else:
             command += [
                 #'-f', filetype.split('.')[1],
@@ -695,9 +762,10 @@ def convert_audio_format(filename, target_file_path, bitrate: int, temp_format, 
                 "2",
                 "-ar",
                 f"{config.get('file_hertz') if target_filetype != '.opus' else 48000}",
-                "-b:a",
-                f"{bitrate}k",
             ]
+            if target_filetype not in [".flac", ".wav"]:
+                command += ["-b:a", f"{bitrate}k"]
+            command += loudnorm_args
 
         # Add user defined parameters
         for param in config.get("ffmpeg_args"):

@@ -96,6 +96,10 @@ export interface OTSConfig {
   album_cover_format: string;
   file_hertz: number;
   use_custom_file_bitrate: boolean;
+  normalize_audio?: boolean;
+  normalize_target_lufs?: number;
+  normalize_target_tp?: number;
+  normalize_target_lra?: number;
   use_source_format: boolean,
   prefer_best_source_format: boolean,
   download_lyrics: boolean;

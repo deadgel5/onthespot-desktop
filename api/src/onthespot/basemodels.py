@@ -205,6 +205,10 @@ class AppSettings(BaseModel):
     album_cover_format: str = "png"
     file_hertz: int = 44100
     use_custom_file_bitrate: bool = False
+    normalize_audio: bool = False
+    normalize_target_lufs: float = -14.0
+    normalize_target_tp: float = -1.0
+    normalize_target_lra: float = 11.0
     use_source_format: bool = False
     prefer_best_source_format: bool = True
     download_lyrics: bool = False

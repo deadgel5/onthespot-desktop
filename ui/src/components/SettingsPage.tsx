@@ -18,7 +18,8 @@ import {
   Save,
   Server,
   Sliders,
-  Tag
+  Tag,
+  Volume2
 } from "lucide-react";
 import React, { useState } from "react";
 import { browseFolder, getTargetBackendUrl, setTargetBackendUrl, testBackendConnection } from "../lib/api";
@@ -492,6 +493,64 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 { key: "only_download_synced_lyrics", label: "Only Download Synced Lyrics", type: "switch", description: "Skip lyrics if time-synced markers are unavailable." },
                 { key: "only_download_plain_lyrics", label: "Only Download Plain Lyrics", type: "switch", description: "Prefer un-synced plain text lines over timed files." },
               ].map(renderInput)}
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <div className="flex items-center gap-2 mb-4">
+              <Volume2 className="w-4 h-4 text-neutral-500" />
+              <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                Audio Volume Normalization (EBU R128 &amp; True Peak)
+              </h3>
+            </div>
+
+            <div className="space-y-4">
+              {renderInput({
+                key: "normalize_audio",
+                label: "Normalize Audio Volume (2-Pass Linear Loudnorm)",
+                type: "switch",
+                description: "Normaliza el volumen sonoro percibido de las pistas descargadas en 2 pases con FFmpeg loudnorm para lograr un nivel uniforme sin clipping ni distorsión de picos.",
+              })}
+
+              {Boolean(config.normalize_audio) && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-neutral-100 dark:border-neutral-800">
+                  {[
+                    {
+                      key: "normalize_target_lufs",
+                      label: "Target Loudness (LUFS)",
+                      type: "number",
+                      min: -30,
+                      max: -5,
+                      step: 0.5,
+                      isFloat: true,
+                      defaultValue: -14.0,
+                      description: "Estándar industrial: -14.0 LUFS (Spotify / YouTube / Tidal).",
+                    },
+                    {
+                      key: "normalize_target_tp",
+                      label: "Max True Peak (dBTP)",
+                      type: "number",
+                      min: -6.0,
+                      max: 0.0,
+                      step: 0.1,
+                      isFloat: true,
+                      defaultValue: -1.0,
+                      description: "Límite máximo de pico: -1.0 dBTP (evita distorsión inter-muestra).",
+                    },
+                    {
+                      key: "normalize_target_lra",
+                      label: "Loudness Range (LRA)",
+                      type: "number",
+                      min: 1.0,
+                      max: 50.0,
+                      step: 1.0,
+                      isFloat: true,
+                      defaultValue: 11.0,
+                      description: "Rango dinámico permitido (por defecto: 11.0 LU).",
+                    },
+                  ].map(renderInput)}
+                </div>
+              )}
             </div>
           </Card>
         </div>
