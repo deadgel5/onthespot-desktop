@@ -434,9 +434,12 @@ class DownloadWorker:
                 logger.error(
                     "Unknown Exception: %s",
                     str(exc),
+                    exc_info=True,
                 )
                 if item is not None:
                     if item.item_status != ItemStatus.CANCELLED:
+                        item.item_status = ItemStatus.FAILED
+                        item.error = f"Error during post-processing: {exc}"
                         requeue_item(item)
                     progress_hook(item, 0, item.item_status)
                     delay = jittered_delay()
@@ -821,8 +824,11 @@ class DownloadWorker:
         target_bitrate = item.download_profile.bitrate
 
         if item_type == "track":
-            if target_format == temp_file_format.strip("."):
-                if target_bitrate == temp_file_bitrate.strip("k"):
+            if config.get("raw_media_download"):
+                final_path = final_file_path + (temp_file_format if temp_file_format else ".mp3")
+                force_bitrate = False
+            elif target_format == temp_file_format.strip("."):
+                if str(target_bitrate) == str(temp_file_bitrate).strip("k"):
                     force_bitrate = False
                 else:
                     force_bitrate = True

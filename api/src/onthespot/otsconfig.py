@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import uuid
 
 from pydantic import TypeAdapter, ValidationError
@@ -145,7 +146,24 @@ class Config:
             os.makedirs(self.get("video_download_path"), exist_ok=True)
 
         # FFMPEG Path Setup
-        ffmpeg_env_path = os.environ.get("FFMPEG_PATH") or shutil.which("ffmpeg")
+        ffmpeg_env_path = os.environ.get("FFMPEG_PATH") or self.get("ffmpeg_path") or shutil.which("ffmpeg")
+        if not ffmpeg_env_path and os.name == "nt":
+            # Search common Windows install paths and sidecar directory
+            win_candidates = [
+                os.path.join(os.path.dirname(sys.executable), "ffmpeg.exe"),
+                os.path.join(os.path.dirname(sys.executable), "bin", "ffmpeg.exe"),
+                os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Links\ffmpeg.exe"),
+                os.path.expandvars(r"%LOCALAPPDATA%\Programs\ffmpeg\bin\ffmpeg.exe"),
+                os.path.expandvars(r"%ProgramFiles%\ffmpeg\bin\ffmpeg.exe"),
+                r"C:\ffmpeg\bin\ffmpeg.exe",
+                r"C:\ffmpeg\ffmpeg.exe",
+                r"C:\ProgramData\chocolatey\bin\ffmpeg.exe",
+                os.path.expandvars(r"%USERPROFILE%\scoop\shims\ffmpeg.exe"),
+            ]
+            for candidate in win_candidates:
+                if os.path.isfile(candidate):
+                    ffmpeg_env_path = candidate
+                    break
         ffmpeg_path = "/usr/bin/ffmpeg" if not ffmpeg_env_path and os.name != "nt" else ffmpeg_env_path
 
         if ffmpeg_path and os.path.isfile(ffmpeg_path):

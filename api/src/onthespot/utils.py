@@ -666,11 +666,18 @@ def get_loudnorm_filter(input_file: str, target_i: float = -14.0, target_tp: flo
     """Perform pass 1 analysis of *input_file* with FFmpeg's loudnorm filter.
 
     Returns the -af arguments for pass 2 (linear 2-pass normalization).
-    If pass 1 or JSON parsing fails, falls back gracefully to standard 1-pass loudnorm.
+    If pass 1 or JSON parsing fails, falls back gracefully to standard 1-pass loudnorm or disables it.
     """
-    ffmpeg_bin = config.get("_ffmpeg_bin_path", "ffmpeg")
+    ffmpeg_bin = config.get("_ffmpeg_bin_path") or "ffmpeg"
+    if not shutil.which(ffmpeg_bin) and not os.path.isfile(ffmpeg_bin):
+        logger.warning("FFmpeg binary not found for loudnorm filter analysis")
+        return []
+
+    null_out = "NUL" if os.name == "nt" else "-"
     pass1_cmd = [
         ffmpeg_bin,
+        "-y",
+        "-nostdin",
         "-hide_banner",
         "-nostats",
         "-i",
@@ -679,17 +686,18 @@ def get_loudnorm_filter(input_file: str, target_i: float = -14.0, target_tp: flo
         f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}:print_format=json",
         "-f",
         "null",
-        "-",
+        null_out,
     ]
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     try:
         res = subprocess.run(
             pass1_cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
             creationflags=creationflags,
-            timeout=120,
+            timeout=60,
         )
         output = res.stderr or ""
         start_idx = output.find("{")
@@ -713,9 +721,9 @@ def get_loudnorm_filter(input_file: str, target_i: float = -14.0, target_tp: flo
             )
             return ["-af", filter_str]
     except Exception as err:
-        logger.warning(f"Loudnorm pass 1 failed, falling back to 1-pass: {err}")
+        logger.warning(f"Loudnorm pass 1 failed, skipping normalization: {err}")
 
-    return ["-af", f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}"]
+    return []
 
 
 def convert_audio_format(filename, target_file_path, bitrate: int, temp_format, force_bitrate=False):
@@ -731,9 +739,15 @@ def convert_audio_format(filename, target_file_path, bitrate: int, temp_format, 
 
         temp_file = os.path.abspath(filename)
 
+        ffmpeg_bin = config.get("_ffmpeg_bin_path") or "ffmpeg"
+        if not shutil.which(ffmpeg_bin) and not os.path.isfile(ffmpeg_bin):
+            raise RuntimeError(
+                f"FFmpeg binary not found at '{ffmpeg_bin}'. Please install FFmpeg or set its path in settings."
+            )
+
         # Prepare default parameters
-        # Existing command initialization
-        command = [config.get("_ffmpeg_bin_path"), "-i", temp_file]
+        # Existing command initialization with overwrite (-y) and non-interactive (-nostdin)
+        command = [ffmpeg_bin, "-y", "-nostdin", "-i", temp_file]
 
         # Set log level based on environment variable
         if config.get("debug_mode", False) == False:
@@ -781,9 +795,15 @@ def convert_audio_format(filename, target_file_path, bitrate: int, temp_format, 
                 shell=False,
                 stdin=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=config.get("ffmpeg_timeout", 300),
             )
         else:
-            subprocess.check_call(command, shell=False, stdin=subprocess.DEVNULL)
+            subprocess.check_call(
+                command,
+                shell=False,
+                stdin=subprocess.DEVNULL,
+                timeout=config.get("ffmpeg_timeout", 300),
+            )
         os.remove(temp_file)
 
 
@@ -799,8 +819,9 @@ def convert_video_format(item, output_path, output_format, video_files, item_met
     temp_file_path = os.path.join(os.path.dirname(target_path), "~" + file_stem + filetype) + "." + output_format
 
     # Prepare default parameters
-    # Existing command initialization
-    command = [config.get("_ffmpeg_bin_path")]
+    # Existing command initialization with overwrite (-y) and non-interactive (-nostdin)
+    ffmpeg_bin = config.get("_ffmpeg_bin_path") or "ffmpeg"
+    command = [ffmpeg_bin, "-y", "-nostdin"]
 
     current_type = ""
     format_map = []
@@ -862,9 +883,15 @@ def convert_video_format(item, output_path, output_format, video_files, item_met
             shell=False,
             stdin=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW,
+            timeout=config.get("ffmpeg_timeout", 600),
         )
     else:
-        subprocess.check_call(command, shell=False, stdin=subprocess.DEVNULL)
+        subprocess.check_call(
+            command,
+            shell=False,
+            stdin=subprocess.DEVNULL,
+            timeout=config.get("ffmpeg_timeout", 600),
+        )
 
     for file in video_files:
         if os.path.exists(file["path"]):
@@ -889,9 +916,15 @@ def embed_metadata(item, metadata):
             os.remove(temp_name)
 
         os.rename(item["file_path"], temp_name)
+        ffmpeg_bin = config.get("_ffmpeg_bin_path") or "ffmpeg"
+        if not shutil.which(ffmpeg_bin) and not os.path.isfile(ffmpeg_bin):
+            logger.warning("FFmpeg binary not found for metadata embedding, skipping embed")
+            os.rename(temp_name, item["file_path"])
+            return
+
         # Prepare default parameters
-        # Existing command initialization
-        command = [config.get("_ffmpeg_bin_path"), "-i", temp_name]
+        # Existing command initialization with overwrite (-y) and non-interactive (-nostdin)
+        command = [ffmpeg_bin, "-y", "-nostdin", "-i", temp_name]
 
         if config.get("debug_mode", False) == False:
             command += ["-loglevel", "error", "-hide_banner", "-nostats"]
@@ -1121,9 +1154,15 @@ def embed_metadata(item, metadata):
                 shell=False,
                 stdin=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=config.get("ffmpeg_timeout", 180),
             )
         else:
-            subprocess.check_call(command, shell=False, stdin=subprocess.DEVNULL)
+            subprocess.check_call(
+                command,
+                shell=False,
+                stdin=subprocess.DEVNULL,
+                timeout=config.get("ffmpeg_timeout", 180),
+            )
         os.remove(temp_name)
 
 
@@ -1172,8 +1211,13 @@ def set_music_thumbnail(filename, metadata):
                 os.remove(temp_name)
 
             os.rename(filename, temp_name)
+            ffmpeg_bin = config.get("_ffmpeg_bin_path") or "ffmpeg"
+            if not shutil.which(ffmpeg_bin) and not os.path.isfile(ffmpeg_bin):
+                logger.warning("FFmpeg binary not found for thumbnail embedding, skipping thumbnail")
+                os.rename(temp_name, filename)
+                return
 
-            command = [config.get("_ffmpeg_bin_path"), "-i", temp_name]
+            command = [ffmpeg_bin, "-y", "-nostdin", "-i", temp_name]
 
             # Set log level based on environment variable
             if config.get("debug_mode", False) == False:
@@ -1204,9 +1248,15 @@ def set_music_thumbnail(filename, metadata):
                     shell=False,
                     stdin=subprocess.DEVNULL,
                     creationflags=subprocess.CREATE_NO_WINDOW,
+                    timeout=config.get("ffmpeg_timeout", 180),
                 )
             else:
-                subprocess.check_call(command, shell=False, stdin=subprocess.DEVNULL)
+                subprocess.check_call(
+                    command,
+                    shell=False,
+                    stdin=subprocess.DEVNULL,
+                    timeout=config.get("ffmpeg_timeout", 180),
+                )
 
         elif config.get("embed_cover") and filetype == ".ogg":
             _embed_with_music_tag(filename, image_path)
@@ -1370,9 +1420,15 @@ def strip_metadata(item):
             os.remove(temp_name)
 
         os.rename(item["file_path"], temp_name)
+        ffmpeg_bin = config.get("_ffmpeg_bin_path") or "ffmpeg"
+        if not shutil.which(ffmpeg_bin) and not os.path.isfile(ffmpeg_bin):
+            logger.warning("FFmpeg binary not found for metadata embedding, skipping embed")
+            os.rename(temp_name, item["file_path"])
+            return
+
         # Prepare default parameters
-        # Existing command initialization
-        command = [config.get("_ffmpeg_bin_path"), "-i", temp_name]
+        # Existing command initialization with overwrite (-y) and non-interactive (-nostdin)
+        command = [ffmpeg_bin, "-y", "-nostdin", "-i", temp_name]
 
         if config.get("debug_mode", False) == False:
             command += ["-loglevel", "error", "-hide_banner", "-nostats"]
@@ -1389,9 +1445,15 @@ def strip_metadata(item):
                 shell=False,
                 stdin=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=config.get("ffmpeg_timeout", 180),
             )
         else:
-            subprocess.check_call(command, shell=False, stdin=subprocess.DEVNULL)
+            subprocess.check_call(
+                command,
+                shell=False,
+                stdin=subprocess.DEVNULL,
+                timeout=config.get("ffmpeg_timeout", 180),
+            )
         os.remove(temp_name)
 
 
