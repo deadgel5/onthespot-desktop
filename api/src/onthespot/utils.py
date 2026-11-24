@@ -21,6 +21,7 @@ import os
 import platform
 import random
 import re
+import shutil
 import ssl
 import string
 import subprocess
